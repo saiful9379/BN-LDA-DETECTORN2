@@ -13,6 +13,16 @@ from detectron2.utils.visualizer import ColorMode
 
 classes = ["paragraph", "text_box", "image", "table"]
 
+CLASS_DICT = {0: 'paragraph', 1: 'text_box', 2: 'image', 3: 'table'}
+
+COLORS = {
+    0: (255, 0, 0), 
+    1: (0, 255, 0), 
+    2: (0, 0, 255), 
+    3: (0, 255, 255)
+    }
+
+
 def get_configuration(model_path, config_path):
     cfg = get_cfg()
     cfg.merge_from_file(model_zoo.get_config_file(config_path))
@@ -38,12 +48,34 @@ def prediction(predictor, img, file_name="unknown.jpg", output_dir = "logs"):
                 scale=0.5,
                 instance_mode=ColorMode.IMAGE_BW
                 )
+    predictions = outputs["instances"].to("cpu")
+    boxes = predictions.pred_boxes if predictions.has("pred_boxes") else None
+    scores = predictions.scores if predictions.has("scores") else None
+    classes = predictions.pred_classes.tolist() if predictions.has("pred_classes") else None
+    keypoints = predictions.pred_keypoints if predictions.has("pred_keypoints") else None
+
+    boxes = boxes.tensor.detach().numpy().tolist()
+
+    for box, _cls in zip(boxes, classes):
+        box = [int(i) for i in box]
+        cv2.putText(img, CLASS_DICT[_cls], (box[0], box[1] - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, \
+                        COLORS[_cls], 1, lineType=cv2.LINE_AA)
+        cv2.rectangle(img, (box[0], box[1]),(box[2], box[3]),  COLORS[_cls], 2)
+
+    print("keypoints :", keypoints)
+
+    if predictions.has("pred_masks"):
+        masks = np.asarray(predictions.pred_masks)
+        print(masks)
+        # masks = [GenericMask(x, self.output.height, self.output.width) for x in masks]
+
+
     out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
     image_out = out.get_image()[:, :, ::-1]
 
     print("after shape", image_out.shape)
     # plt.show()
-    cv2.imwrite(os.path.join(output_dir, file_name), image_out)
+    cv2.imwrite(os.path.join(output_dir, file_name), img)
 
 if __name__ == "__main__":
 
