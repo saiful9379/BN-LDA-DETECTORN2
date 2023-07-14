@@ -1,7 +1,9 @@
 import os
 import json
+import glob
 import cv2
-import numpy as np 
+import numpy as np
+import torch 
 import matplotlib.pyplot as plt
 # import some common detectron2 utilities
 from detectron2 import model_zoo
@@ -9,7 +11,11 @@ from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
 from detectron2.utils.visualizer import Visualizer
 from detectron2.utils.visualizer import ColorMode
+from utility.visulization import draw_mask
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') 
+
+DEBUG = True
 
 classes = ["paragraph", "text_box", "image", "table"]
 
@@ -21,6 +27,26 @@ COLORS = {
     2: (0, 0, 255), 
     3: (0, 255, 255)
     }
+
+def masks_processing(mask, img_dim):
+    H, W = img_dim[0], img_dim[1]
+    mask = mask* 255
+    mask  = mask.astype('uint8')
+    mask = cv2.resize(mask, (W, H))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Extract the contour points from the largest contour
+    largest_contour = max(contours, key=cv2.contourArea)
+    contour_points = largest_contour.reshape(-1, 2)
+    contour_points = contour_points.reshape((-1, 1, 2))
+
+    allx_ally = [(i[0][0], i[0][1]) for i in contour_points.tolist()]
+
+    return allx_ally
+
+def get_polygon_of_masks(masks, img_dim):
+    img_dims = [img_dim]*len(masks)
+    p_polygon = list(map(masks_processing, masks, img_dims))
+    return p_polygon
 
 
 def get_configuration(model_path, config_path):
@@ -40,8 +66,7 @@ def model_loading(cfg):
     return predictor
 
 def prediction(predictor, img, file_name="unknown.jpg", output_dir = "logs"):
-
-    print(img.shape)
+    H, W, _ = img.shape
 
     outputs = predictor(img)
     v = Visualizer(img[:, :, ::-1],
@@ -61,32 +86,32 @@ def prediction(predictor, img, file_name="unknown.jpg", output_dir = "logs"):
         cv2.putText(img, CLASS_DICT[_cls], (box[0], box[1] - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, \
                         COLORS[_cls], 1, lineType=cv2.LINE_AA)
         cv2.rectangle(img, (box[0], box[1]),(box[2], box[3]),  COLORS[_cls], 2)
-
-    print("keypoints :", keypoints)
-
     if predictions.has("pred_masks"):
         masks = np.asarray(predictions.pred_masks)
-        print(masks)
-        # masks = [GenericMask(x, self.output.height, self.output.width) for x in masks]
+        masks = [mask.astype(int) for mask in masks]
 
+        polyon_coordinates = get_polygon_of_masks(masks, img_dim=[H, W])
 
-    out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
-    image_out = out.get_image()[:, :, ::-1]
-
-    print("after shape", image_out.shape)
-    # plt.show()
+        img = draw_mask(img, polyon_coordinates, classes)
     cv2.imwrite(os.path.join(output_dir, file_name), img)
 
 if __name__ == "__main__":
-
+    from tqdm import tqdm 
     config_path = "./configs/COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml"
     model_path = "/media/sayan/hdd1/CV/BN-LDA-DETECTORN2/model/model_final.pth"
-    image_path = "/media/sayan/hdd1/CV/BN-LDA-DETECTORN2/image/1cb63ad5-a85c-4969-a5cb-4a95723409ba.png"
+    image_path = "/media/sayan/hdd1/CV/BN-LDA-DETECTORN2/image"
 
     output_dir = "logs"
     os.makedirs(output_dir, exist_ok=True)
-    file_name = os.path.basename(image_path)
-    img = cv2.imread(image_path)
+
+    print("Model Loading .........")
     cfg = get_configuration(model_path, config_path)
     model = model_loading(cfg)
-    prediction(model, img, file_name, output_dir) 
+    print("Done")
+
+    image_files = glob.glob(image_path+"/*")
+    for i in tqdm(range(len(image_files))):
+        file_ = image_files[i]
+        file_name = os.path.basename(file_)
+        img = cv2.imread(file_)
+        prediction(model, img, file_name, output_dir) 
